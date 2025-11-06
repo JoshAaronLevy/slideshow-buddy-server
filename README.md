@@ -1,0 +1,1 @@
+# Slideshow Buddy Server
