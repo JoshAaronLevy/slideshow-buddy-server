@@ -40,7 +40,7 @@ You are a senior Node/Express engineer. Convert this brand-new repo (`slideshow-
 
 ### 2) Environment files
 
-* Create `.env.example` (no secrets) with:
+* a `.env` file has already been created with the following vars (with the actual Spotify client ID filled in):
 
   ```
   PORT=8080
@@ -49,7 +49,6 @@ You are a senior Node/Express engineer. Convert this brand-new repo (`slideshow-
   # For browser debugging only (native iOS ignores CORS):
   CORS_ORIGIN=http://localhost:5173
   ```
-* Ensure `.gitignore` includes: `node_modules`, `dist`, `.env`, `.DS_Store`.
 
 ### 3) Implement server: `src/server.ts`
 
