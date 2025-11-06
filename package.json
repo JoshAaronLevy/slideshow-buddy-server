@@ -1,13 +1,32 @@
 {
   "name": "slideshow-buddy-server",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "PKCE-only Spotify OAuth backend for Slideshow Buddy iOS app",
+  "main": "dist/server.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
   },
-  "keywords": [],
+  "keywords": ["spotify", "oauth", "pkce", "express"],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/morgan": "^1.9.9",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
 }
