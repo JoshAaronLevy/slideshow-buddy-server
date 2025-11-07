@@ -48,6 +48,16 @@ app.use(cors(corsOptions));
 // Body parsing
 app.use(express.json());
 
+// CORS preflight logging
+app.options('*', (req: Request, res: Response) => {
+  console.log('[SpotifyAuth] CORS preflight request', {
+    origin: req.headers.origin,
+    method: req.headers['access-control-request-method'],
+    headers: req.headers['access-control-request-headers'],
+  });
+  res.sendStatus(204);
+});
+
 // Rate limiting for auth endpoints
 const authRateLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
@@ -91,28 +101,59 @@ const refreshRequestSchema = z.object({
 // POST /auth/spotify/token - Exchange authorization code for tokens (PKCE)
 app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Response) => {
   try {
+    const { code, code_verifier } = req.body;
+    
+    console.log('[SpotifyAuth] Token exchange request received', {
+      hasCode: !!code,
+      codeLength: code?.length,
+      codePreview: code ? `${code.substring(0, 6)}...${code.substring(code.length - 6)}` : undefined,
+      hasCodeVerifier: !!code_verifier,
+      verifierLength: code_verifier?.length,
+      origin: req.headers.origin,
+      userAgent: req.headers['user-agent'],
+    });
+    
     // Validate request body
     const validationResult = tokenRequestSchema.safeParse(req.body);
     if (!validationResult.success) {
+      console.log('[SpotifyAuth] Token exchange validation failed', {
+        errors: validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+      });
       return res.status(400).json({
         error: 'invalid_request',
         details: validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
       });
     }
 
-    const { code, code_verifier } = validationResult.data;
+    console.log('[SpotifyAuth] Token exchange validation passed');
+
+    const { code: validatedCode, code_verifier: validatedCodeVerifier } = validationResult.data;
 
     // Build Spotify token request params
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
-      code,
+      code: validatedCode,
       redirect_uri: SPOTIFY_REDIRECT_URI,
       client_id: SPOTIFY_CLIENT_ID,
-      code_verifier,
+      code_verifier: validatedCodeVerifier,
+    });
+
+    console.log('[SpotifyAuth] Calling Spotify token API', {
+      grantType: 'authorization_code',
+      redirectUri: SPOTIFY_REDIRECT_URI,
+      clientId: `${SPOTIFY_CLIENT_ID.substring(0, 8)}...`,
     });
 
     // Exchange code for tokens
     const tokenData = await spotifyToken(params);
+
+    console.log('[SpotifyAuth] Token exchange successful', {
+      hasAccessToken: !!tokenData.access_token,
+      hasRefreshToken: !!tokenData.refresh_token,
+      tokenType: tokenData.token_type,
+      expiresIn: tokenData.expires_in,
+      scope: tokenData.scope,
+    });
 
     // Return token response
     res.json({
@@ -123,7 +164,14 @@ app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Respo
       scope: tokenData.scope,
     });
   } catch (error: any) {
-    console.error('Spotify token exchange error:', error.response?.data || error.message);
+    console.error('[SpotifyAuth] Token exchange error', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      error: error.response?.data?.error,
+      errorDescription: error.response?.data?.error_description,
+      message: error.message,
+      fullResponse: error.response?.data,
+    });
     
     const status = error.response?.status || 500;
     const details = error.response?.data || { message: error.message };
@@ -138,37 +186,73 @@ app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Respo
 // POST /auth/spotify/refresh - Refresh access token
 app.post('/auth/spotify/refresh', authRateLimiter, async (req: Request, res: Response) => {
   try {
+    const { refresh_token } = req.body;
+    
+    console.log('[SpotifyAuth] Token refresh request received', {
+      hasRefreshToken: !!refresh_token,
+      tokenLength: refresh_token?.length,
+      tokenPreview: refresh_token ? `${refresh_token.substring(0, 6)}...${refresh_token.substring(refresh_token.length - 6)}` : undefined,
+      origin: req.headers.origin,
+      userAgent: req.headers['user-agent'],
+    });
+    
     // Validate request body
     const validationResult = refreshRequestSchema.safeParse(req.body);
     if (!validationResult.success) {
+      console.log('[SpotifyAuth] Token refresh validation failed', {
+        errors: validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+      });
       return res.status(400).json({
         error: 'invalid_request',
         details: validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
       });
     }
 
-    const { refresh_token } = validationResult.data;
+    console.log('[SpotifyAuth] Token refresh validation passed');
+
+    const { refresh_token: validatedRefreshToken } = validationResult.data;
 
     // Build Spotify refresh request params
     const params = new URLSearchParams({
       grant_type: 'refresh_token',
-      refresh_token,
+      refresh_token: validatedRefreshToken,
       client_id: SPOTIFY_CLIENT_ID,
+    });
+
+    console.log('[SpotifyAuth] Calling Spotify refresh API', {
+      grantType: 'refresh_token',
+      clientId: `${SPOTIFY_CLIENT_ID.substring(0, 8)}...`,
     });
 
     // Refresh token
     const tokenData = await spotifyToken(params);
 
+    console.log('[SpotifyAuth] Token refresh successful', {
+      hasAccessToken: !!tokenData.access_token,
+      hasNewRefreshToken: !!tokenData.refresh_token,
+      willPreserveOldRefreshToken: !tokenData.refresh_token,
+      tokenType: tokenData.token_type,
+      expiresIn: tokenData.expires_in,
+      scope: tokenData.scope,
+    });
+
     // Return token response (preserve old refresh_token if Spotify doesn't send a new one)
     res.json({
       access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token ?? refresh_token,
+      refresh_token: tokenData.refresh_token ?? validatedRefreshToken,
       token_type: tokenData.token_type,
       expires_in: tokenData.expires_in,
       scope: tokenData.scope,
     });
   } catch (error: any) {
-    console.error('Spotify refresh error:', error.response?.data || error.message);
+    console.error('[SpotifyAuth] Token refresh error', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      error: error.response?.data?.error,
+      errorDescription: error.response?.data?.error_description,
+      message: error.message,
+      fullResponse: error.response?.data,
+    });
     
     const status = error.response?.status || 500;
     const details = error.response?.data || { message: error.message };
@@ -195,4 +279,9 @@ app.listen(parseInt(PORT, 10), () => {
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🎵 Spotify Client ID: ${SPOTIFY_CLIENT_ID.substring(0, 8)}...`);
   console.log(`🔄 Redirect URI: ${SPOTIFY_REDIRECT_URI}`);
+  console.log('[SpotifyAuth] Spotify OAuth configuration loaded', {
+    clientId: `${SPOTIFY_CLIENT_ID.substring(0, 8)}...`,
+    redirectUri: SPOTIFY_REDIRECT_URI,
+    corsOrigin: CORS_ORIGIN || 'all origins (development mode)',
+  });
 });

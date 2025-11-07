@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-11-06
+
+### Added
+- Comprehensive logging for Spotify OAuth endpoints with `[SpotifyAuth]` prefix
+- Detailed request logging for token exchange endpoint (sanitized parameters)
+- Detailed request logging for token refresh endpoint (sanitized parameters)
+- Validation result logging (success and failure cases)
+- Spotify API call logging with request parameters (client ID sanitized)
+- Success response logging with token presence indicators (not values)
+- Enhanced error logging with full Spotify API error details
+- CORS preflight request logging for debugging mobile app requests
+- Startup configuration logging showing redirect URI and CORS settings
+- Security: All logs sanitize sensitive data (tokens/codes show only preview or length)
+
 ## [1.0.0] - 2025-11-06
 
 ### Added
