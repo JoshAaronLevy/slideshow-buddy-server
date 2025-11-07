@@ -1,6 +1,6 @@
 {
   "name": "slideshow-buddy-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PKCE-only Spotify OAuth backend for Slideshow Buddy iOS app",
   "main": "dist/server.js",
   "type": "module",
