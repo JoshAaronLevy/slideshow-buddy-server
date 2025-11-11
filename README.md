@@ -40,6 +40,18 @@ Required variables:
 - `SPOTIFY_REDIRECT_URI` - iOS custom scheme redirect (e.g., `com.slideshowbuddy://callback`)
 - `CORS_ORIGIN` - Optional: Comma-separated list of allowed origins for web debugging (defaults to allow all)
 
+### Capacitor Mobile Apps
+
+If using Capacitor mobile apps, set `CORS_ORIGIN` to include `capacitor://localhost` along with your web origins:
+
+```
+CORS_ORIGIN=capacitor://localhost,http://localhost:5173,https://localhost:5173
+```
+
+This allows requests from:
+- iOS Capacitor apps (`capacitor://localhost`)
+- Local web development servers (`http://localhost:5173`, `https://localhost:5173`)
+
 ### Development
 
 Start the development server with hot reload:
