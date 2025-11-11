@@ -35,13 +35,20 @@ if (process.env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
 }
 
-// CORS configuration
-const corsOptions = CORS_ORIGIN
-  ? {
-      origin: CORS_ORIGIN.split(',').map(o => o.trim()),
-      credentials: true
-    }
-  : { origin: true }; // Allow all origins in dev if not specified
+// Parse CORS_ORIGIN into an array
+const rawOrigins = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+
+const corsOptions: cors.CorsOptions = {
+  origin(origin, callback) {
+    // Allow requests without Origin header (curl, Postman, server-to-server)
+    if (!origin) return callback(null, true);
+    if (rawOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`Not allowed by CORS: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false
+};
 
 app.use(cors(corsOptions));
 
