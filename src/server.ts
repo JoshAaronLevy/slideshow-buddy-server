@@ -38,15 +38,30 @@ if (process.env.NODE_ENV !== 'production') {
 // Parse CORS_ORIGIN into an array
 const rawOrigins = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
 
+// Validate CORS configuration on boot
+if (rawOrigins.length === 0) {
+  console.warn('[SpotifyAuth] CORS_ORIGIN is empty - all origins with Origin header will be rejected');
+  console.warn('[SpotifyAuth] This is okay for mobile apps (they don\'t send Origin), but web clients will fail');
+} else {
+  console.log('[SpotifyAuth] CORS allowed origins:', rawOrigins);
+}
+
 const corsOptions: cors.CorsOptions = {
   origin(origin, callback) {
-    // Allow requests without Origin header (curl, Postman, server-to-server)
+    // Allow requests without Origin header (curl, Postman, server-to-server, mobile apps)
     if (!origin) return callback(null, true);
     if (rawOrigins.includes(origin)) return callback(null, true);
+    
+    // Log rejection for debugging
+    console.warn('[SpotifyAuth] CORS rejection', {
+      rejectedOrigin: origin,
+      allowedOrigins: rawOrigins,
+    });
     return callback(new Error(`Not allowed by CORS: ${origin}`));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
+  exposedHeaders: ['X-Correlation-ID'],
   credentials: false
 };
 
@@ -55,13 +70,44 @@ app.use(cors(corsOptions));
 // Body parsing
 app.use(express.json());
 
+// Correlation ID middleware - for request tracing
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Check for client-provided correlation ID, or generate one
+  const correlationId = (req.headers['x-correlation-id'] as string) || 
+                        `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  
+  // Attach to request object for use in handlers
+  (req as any).correlationId = correlationId;
+  
+  // Return in response headers for client-side debugging
+  res.setHeader('X-Correlation-ID', correlationId);
+  
+  next();
+});
+
 // CORS preflight logging
 app.options('*', (req: Request, res: Response) => {
+  const correlationId = (req as any).correlationId;
   console.log('[SpotifyAuth] CORS preflight request', {
+    correlationId,
+    path: req.path,
     origin: req.headers.origin,
-    method: req.headers['access-control-request-method'],
-    headers: req.headers['access-control-request-headers'],
+    requestMethod: req.headers['access-control-request-method'],
+    requestHeaders: req.headers['access-control-request-headers'],
+    ip: req.ip,
   });
+  
+  // The actual CORS headers are set by the cors() middleware above
+  // Log what will be sent back
+  console.log('[SpotifyAuth] CORS preflight response', {
+    correlationId,
+    path: req.path,
+    origin: req.headers.origin,
+    allowOrigin: res.getHeader('Access-Control-Allow-Origin'),
+    allowMethods: res.getHeader('Access-Control-Allow-Methods'),
+    allowHeaders: res.getHeader('Access-Control-Allow-Headers'),
+  });
+  
   res.sendStatus(204);
 });
 
@@ -72,6 +118,21 @@ const authRateLimiter = rateLimit({
   message: { error: 'too_many_requests', details: 'Rate limit exceeded. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req: Request, res: Response) => {
+    const correlationId = (req as any).correlationId;
+    console.warn('[SpotifyAuth] Rate limit exceeded', {
+      correlationId,
+      ip: req.ip,
+      path: req.path,
+      method: req.method,
+      origin: req.headers.origin,
+      userAgent: req.headers['user-agent'],
+    });
+    res.status(429).json({
+      error: 'too_many_requests',
+      details: 'Rate limit exceeded. Please try again later.',
+    });
+  },
 });
 
 // Helper function to call Spotify token endpoint
@@ -107,10 +168,13 @@ const refreshRequestSchema = z.object({
 
 // POST /auth/spotify/token - Exchange authorization code for tokens (PKCE)
 app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Response) => {
+  const correlationId = (req as any).correlationId;
+  
   try {
     const { code, code_verifier } = req.body;
     
     console.log('[SpotifyAuth] Token exchange request received', {
+      correlationId,
       hasCode: !!code,
       codeLength: code?.length,
       codePreview: code ? `${code.substring(0, 6)}...${code.substring(code.length - 6)}` : undefined,
@@ -118,12 +182,14 @@ app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Respo
       verifierLength: code_verifier?.length,
       origin: req.headers.origin,
       userAgent: req.headers['user-agent'],
+      ip: req.ip,
     });
     
     // Validate request body
     const validationResult = tokenRequestSchema.safeParse(req.body);
     if (!validationResult.success) {
       console.log('[SpotifyAuth] Token exchange validation failed', {
+        correlationId,
         errors: validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
       });
       return res.status(400).json({
@@ -132,7 +198,7 @@ app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Respo
       });
     }
 
-    console.log('[SpotifyAuth] Token exchange validation passed');
+    console.log('[SpotifyAuth] Token exchange validation passed', { correlationId });
 
     const { code: validatedCode, code_verifier: validatedCodeVerifier } = validationResult.data;
 
@@ -146,6 +212,7 @@ app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Respo
     });
 
     console.log('[SpotifyAuth] Calling Spotify token API', {
+      correlationId,
       grantType: 'authorization_code',
       redirectUri: SPOTIFY_REDIRECT_URI,
       clientId: `${SPOTIFY_CLIENT_ID.substring(0, 8)}...`,
@@ -155,6 +222,7 @@ app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Respo
     const tokenData = await spotifyToken(params);
 
     console.log('[SpotifyAuth] Token exchange successful', {
+      correlationId,
       hasAccessToken: !!tokenData.access_token,
       hasRefreshToken: !!tokenData.refresh_token,
       tokenType: tokenData.token_type,
@@ -172,6 +240,7 @@ app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Respo
     });
   } catch (error: any) {
     console.error('[SpotifyAuth] Token exchange error', {
+      correlationId,
       status: error.response?.status,
       statusText: error.response?.statusText,
       error: error.response?.data?.error,
@@ -192,21 +261,26 @@ app.post('/auth/spotify/token', authRateLimiter, async (req: Request, res: Respo
 
 // POST /auth/spotify/refresh - Refresh access token
 app.post('/auth/spotify/refresh', authRateLimiter, async (req: Request, res: Response) => {
+  const correlationId = (req as any).correlationId;
+  
   try {
     const { refresh_token } = req.body;
     
     console.log('[SpotifyAuth] Token refresh request received', {
+      correlationId,
       hasRefreshToken: !!refresh_token,
       tokenLength: refresh_token?.length,
       tokenPreview: refresh_token ? `${refresh_token.substring(0, 6)}...${refresh_token.substring(refresh_token.length - 6)}` : undefined,
       origin: req.headers.origin,
       userAgent: req.headers['user-agent'],
+      ip: req.ip,
     });
     
     // Validate request body
     const validationResult = refreshRequestSchema.safeParse(req.body);
     if (!validationResult.success) {
       console.log('[SpotifyAuth] Token refresh validation failed', {
+        correlationId,
         errors: validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
       });
       return res.status(400).json({
@@ -215,7 +289,7 @@ app.post('/auth/spotify/refresh', authRateLimiter, async (req: Request, res: Res
       });
     }
 
-    console.log('[SpotifyAuth] Token refresh validation passed');
+    console.log('[SpotifyAuth] Token refresh validation passed', { correlationId });
 
     const { refresh_token: validatedRefreshToken } = validationResult.data;
 
@@ -227,6 +301,7 @@ app.post('/auth/spotify/refresh', authRateLimiter, async (req: Request, res: Res
     });
 
     console.log('[SpotifyAuth] Calling Spotify refresh API', {
+      correlationId,
       grantType: 'refresh_token',
       clientId: `${SPOTIFY_CLIENT_ID.substring(0, 8)}...`,
     });
@@ -235,6 +310,7 @@ app.post('/auth/spotify/refresh', authRateLimiter, async (req: Request, res: Res
     const tokenData = await spotifyToken(params);
 
     console.log('[SpotifyAuth] Token refresh successful', {
+      correlationId,
       hasAccessToken: !!tokenData.access_token,
       hasNewRefreshToken: !!tokenData.refresh_token,
       willPreserveOldRefreshToken: !tokenData.refresh_token,
@@ -253,6 +329,7 @@ app.post('/auth/spotify/refresh', authRateLimiter, async (req: Request, res: Res
     });
   } catch (error: any) {
     console.error('[SpotifyAuth] Token refresh error', {
+      correlationId,
       status: error.response?.status,
       statusText: error.response?.statusText,
       error: error.response?.data?.error,
@@ -271,9 +348,35 @@ app.post('/auth/spotify/refresh', authRateLimiter, async (req: Request, res: Res
   }
 });
 
+// 404 handler - must come before global error handler
+app.use((req: Request, res: Response, _next: NextFunction) => {
+  const correlationId = (req as any).correlationId;
+  console.warn('[SpotifyAuth] 404 Not Found', {
+    correlationId,
+    method: req.method,
+    path: req.path,
+    url: req.url,
+    origin: req.headers.origin,
+    userAgent: req.headers['user-agent'],
+    ip: req.ip,
+  });
+  res.status(404).json({
+    error: 'not_found',
+    details: `Route ${req.method} ${req.path} does not exist`,
+  });
+});
+
 // Global error handler
-app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('Unhandled error:', error);
+app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
+  const correlationId = (req as any).correlationId;
+  console.error('[SpotifyAuth] Unhandled error', {
+    correlationId,
+    method: req.method,
+    path: req.path,
+    origin: req.headers.origin,
+    error: error.message,
+    stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined,
+  });
   res.status(500).json({
     error: 'internal_error',
     details: process.env.NODE_ENV !== 'production' ? error.message : 'An unexpected error occurred',
