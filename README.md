@@ -42,14 +42,15 @@ Required variables:
 
 ### Capacitor Mobile Apps
 
-If using Capacitor mobile apps, set `CORS_ORIGIN` to include `capacitor://localhost` along with your web origins:
+If using Capacitor mobile apps, set `CORS_ORIGIN` to include the appropriate origins along with your web origins:
 
 ```
-CORS_ORIGIN=capacitor://localhost,http://localhost:5173,https://localhost:5173
+CORS_ORIGIN=capacitor://localhost,capacitor-electron://-,http://localhost:5173,https://localhost:5173
 ```
 
 This allows requests from:
 - iOS Capacitor apps (`capacitor://localhost`)
+- macOS Electron apps (`capacitor-electron://-`)
 - Local web development servers (`http://localhost:5173`, `https://localhost:5173`)
 
 ### Development
